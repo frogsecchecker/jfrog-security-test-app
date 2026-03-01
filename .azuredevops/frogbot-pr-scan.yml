@@ -1,0 +1,108 @@
+# Azure DevOps Pipeline for Frogbot PR Scanning (template-based)
+
+pool:  
+  name: MapleForge-MDOP-Dev  
+  demands:  
+   - ImageOverride -equals linux
+
+trigger: none
+
+pr:
+  branches:
+    include:
+      - main
+      - develop
+
+variables:
+  - group: JFrog-Credentials
+  - name: JF_GIT_PULL_REQUEST_ID
+    value: $(System.PullRequest.PullRequestId)
+  - name: JF_GIT_PROJECT
+    value: $(System.TeamProject)
+  - name: JF_GIT_REPO
+    value: $(Build.Repository.Name)
+  - name: JF_GIT_API_ENDPOINT
+    value: $(System.CollectionUri)
+  - name: JF_GIT_BASE_BRANCH
+    value: $(System.PullRequest.TargetBranchName)
+  - name: JF_GIT_OWNER
+    value: $(System.TeamProject)
+  - name: JF_GIT_PROVIDER
+    value: 'azureRepos'
+  - name: JF_URL
+    value: $(JFROG_URL)
+  - name: JF_ACCESS_TOKEN
+    value: $(JFROG_ACCESS_TOKEN)
+  - name: JF_GIT_TOKEN
+    value: $(AZURE_TOKEN)
+
+jobs:
+  - job: FrogbotPRScan
+    displayName: "Frogbot Scan Pull Request"
+    steps:
+      - checkout: self
+        displayName: 'Checkout Source Code'
+        persistCredentials: true
+
+      - task: Bash@3
+        displayName: 'Download Frogbot'
+        env:
+          JF_URL: $(JF_URL)
+          JF_ACCESS_TOKEN: $(JF_ACCESS_TOKEN)
+          JF_RELEASES_REPO: 'mj-frongbotrepo'
+        inputs:
+          targetType: 'inline'
+          script: |
+            # Get Frogbot_linux from local Artifactory
+            getFrogbotPath="${JF_URL}/artifactory/${JF_RELEASES_REPO}/Frogbot_linux"
+            
+            echo "Downloading from: $getFrogbotPath"
+            
+            # Download Frogbot_linux using curl with authentication
+            curl -fLg -H "Authorization: Bearer ${JF_ACCESS_TOKEN}" "$getFrogbotPath" -o Frogbot_linux
+            
+            # Check file type and size
+            file Frogbot_linux
+            ls -lh Frogbot_linux
+            
+            # If it's an archive, extract it
+            if file Frogbot_linux | grep -q "gzip"; then
+              echo "Detected gzip archive, extracting..."
+              tar -xzf Frogbot_linux
+              ls -la frogbot 2>/dev/null || echo "No frogbot file after extraction"
+            elif file Frogbot_linux | grep -q "Zip"; then
+              echo "Detected zip archive, extracting..."
+              unzip -o Frogbot_linux
+              ls -la frogbot 2>/dev/null || echo "No frogbot file after extraction"
+            else
+              echo "Binary file detected, renaming to frogbot"
+              mv Frogbot_linux frogbot
+            fi
+            
+            chmod +x frogbot
+            echo "Frogbot ready for execution"
+
+      - task: Bash@3
+        displayName: 'Run Frogbot Scan'
+        env:
+          JF_URL: $(JF_URL)
+          JF_ACCESS_TOKEN: $(JF_ACCESS_TOKEN)
+          JF_GIT_TOKEN: $(JF_GIT_TOKEN)
+          JF_GIT_PULL_REQUEST_ID: $(JF_GIT_PULL_REQUEST_ID)
+          JF_GIT_PROJECT: $(JF_GIT_PROJECT)
+          JF_GIT_REPO: $(JF_GIT_REPO)
+          JF_GIT_API_ENDPOINT: $(JF_GIT_API_ENDPOINT)
+          JF_GIT_BASE_BRANCH: $(JF_GIT_BASE_BRANCH)
+          JF_GIT_OWNER: $(JF_GIT_OWNER)
+          JF_GIT_PROVIDER: $(JF_GIT_PROVIDER)
+          JF_SKIP_CONFIG_FILE: 'TRUE'
+          # Enable all security scans
+          JF_INCLUDE_APPLICABILITY: 'TRUE'
+          #JF_FAIL: 'false'
+          JF_WATCHES: Security_Watch
+          JFROG_CLI_LOG_LEVEL: 'DEBUG'
+        inputs:
+          targetType: 'inline'
+          script: |
+            echo "Starting Frogbot security scan..."
+            ./frogbot spr
