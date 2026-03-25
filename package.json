@@ -1,6 +1,6 @@
 {
   "devDependencies": {
-    "lodash": "^999.17.20"
+    "lodash": "^4.17.20"
   },
   "dependencies": {
     "minimist": "1.2.5"
